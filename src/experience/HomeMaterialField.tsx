@@ -1,12 +1,29 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { organicAxis } from './noise'
+import { useIntroTimeline } from './useIntroTimeline'
 import './home-material-field.css'
 
 const MATERIAL_TEXTURE_URL = '/assets/home-material-crystal.png'
 const FAR_FRAGMENT_COUNT = 16
 const NEAR_FRAGMENT_COUNT = 11
 const BASE_CAMERA_Z = 6.0
+const INTRO_DURATION_MS = 2600
+const CAMERA_INTRO_OFFSET = 2.6
+const DAMP_LAMBDA = 4
+
+// Cutout tuning for the silhouette plane/particle pipeline. Move
+// PLANE_ALPHA_DISCARD down / SILHOUETTE_ALPHA_MIN down if a real silhouette
+// texture shows a transparent fringe at its edge; move them up if the edge
+// looks eaten into the object. NOTE: home-material-crystal.png currently has
+// no alpha channel at all (confirmed 8-bit RGB) - every sampled alpha reads
+// as opaque, so the discard never fires and sampleSilhouetteAnchors finds no
+// edge anchors (see the CSS mask-image fallback in home-material-field.css
+// and the CLAUDE.md note on this).
+const PLANE_ALPHA_DISCARD = 0.03
+const SILHOUETTE_ALPHA_MIN = 140
+const SILHOUETTE_NEIGHBOR_MAX = 60
 
 const noiseGLSL = /* glsl */ `
   float hash(vec3 p) {
@@ -72,7 +89,7 @@ const materialFragmentShader = /* glsl */ `
 
   void main() {
     vec4 tex = texture2D(uMap, vUv);
-    if (tex.a < 0.03) discard;
+    if (tex.a < ${PLANE_ALPHA_DISCARD}) discard;
 
     vec3 normal = normalize(vNormal);
     vec3 lightA = normalize(vec3(0.58 + sin(uTime * 0.035) * 0.1, 0.74, 0.56 + cos(uTime * 0.029) * 0.1));
@@ -82,7 +99,7 @@ const materialFragmentShader = /* glsl */ `
     vec3 warm = vec3(1.12, 1.0, 0.84);
     vec3 cool = vec3(0.8, 0.86, 0.99);
     float breathe = 0.96 + 0.04 * sin(uTime * 0.017);
-    vec3 shade = vec3(0.62) + key * 0.38 * warm + fill * 0.13 * cool;
+    vec3 shade = vec3(0.62) + key * 0.22 * warm + fill * 0.08 * cool;
     vec3 color = tex.rgb * shade * breathe;
     gl_FragColor = vec4(color, tex.a);
   }
@@ -152,9 +169,12 @@ function sampleSilhouetteAnchors(image: HTMLImageElement, count: number): Anchor
   for (let y = 1; y < sampleSize - 1; y += 2) {
     for (let x = 1; x < sampleSize - 1; x += 2) {
       const a = alphaAt(x, y)
-      if (a < 140) continue
+      if (a < SILHOUETTE_ALPHA_MIN) continue
       const nearsEdge =
-        alphaAt(x + 3, y) < 60 || alphaAt(x - 3, y) < 60 || alphaAt(x, y + 3) < 60 || alphaAt(x, y - 3) < 60
+        alphaAt(x + 3, y) < SILHOUETTE_NEIGHBOR_MAX ||
+        alphaAt(x - 3, y) < SILHOUETTE_NEIGHBOR_MAX ||
+        alphaAt(x, y + 3) < SILHOUETTE_NEIGHBOR_MAX ||
+        alphaAt(x, y - 3) < SILHOUETTE_NEIGHBOR_MAX
       if (!nearsEdge) continue
       const i = (y * sampleSize + x) * 4
       edge.push({
@@ -188,29 +208,37 @@ function useContainScale(textureAspect: number) {
   }, [viewport.width, viewport.height, textureAspect])
 }
 
-function MaterialPlane({ texture }: { texture: THREE.Texture }) {
+const OBJECT_SEEDS = { posX: 3.1, posY: 58.4, rotZ: 12.9, rotX: 77.2, rotY: 5.6 }
+
+function MaterialPlane({
+  texture,
+  introProgress,
+}: {
+  texture: THREE.Texture
+  introProgress: MutableRefObject<number>
+}) {
   const image = texture.image as HTMLImageElement
   const textureAspect = image.width / image.height
   const [planeWidth, planeHeight] = useContainScale(textureAspect)
   const uniforms = useMemo(() => ({ uMap: { value: texture }, uTime: { value: 0 } }), [texture])
   const group = useRef<THREE.Group>(null)
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
     const t = clock.getElapsedTime()
     uniforms.uTime.value = t
 
     if (!group.current) return
-    const targetX = Math.sin(t * 0.023) * 0.045 + Math.sin(t * 0.011) * 0.022
-    const targetY = Math.cos(t * 0.019) * 0.032
-    const targetRotZ = Math.sin(t * 0.015) * 0.012
-    const targetRotX = Math.cos(t * 0.0127) * 0.008
-    const targetRotY = Math.sin(t * 0.0091) * 0.006
-    const settle = 0.01
-    group.current.position.x += (targetX - group.current.position.x) * settle
-    group.current.position.y += (targetY - group.current.position.y) * settle
-    group.current.rotation.z += (targetRotZ - group.current.rotation.z) * settle
-    group.current.rotation.x += (targetRotX - group.current.rotation.x) * settle
-    group.current.rotation.y += (targetRotY - group.current.rotation.y) * settle
+    const drift = introProgress.current
+    const targetX = organicAxis(t, OBJECT_SEEDS.posX) * 0.045 * drift
+    const targetY = organicAxis(t, OBJECT_SEEDS.posY) * 0.032 * drift
+    const targetRotZ = organicAxis(t, OBJECT_SEEDS.rotZ) * 0.012 * drift
+    const targetRotX = organicAxis(t, OBJECT_SEEDS.rotX) * 0.008 * drift
+    const targetRotY = organicAxis(t, OBJECT_SEEDS.rotY) * 0.006 * drift
+    group.current.position.x = THREE.MathUtils.damp(group.current.position.x, targetX, DAMP_LAMBDA, delta)
+    group.current.position.y = THREE.MathUtils.damp(group.current.position.y, targetY, DAMP_LAMBDA, delta)
+    group.current.rotation.z = THREE.MathUtils.damp(group.current.rotation.z, targetRotZ, DAMP_LAMBDA, delta)
+    group.current.rotation.x = THREE.MathUtils.damp(group.current.rotation.x, targetRotX, DAMP_LAMBDA, delta)
+    group.current.rotation.y = THREE.MathUtils.damp(group.current.rotation.y, targetRotY, DAMP_LAMBDA, delta)
   })
 
   return (
@@ -243,6 +271,7 @@ type FragmentBandConfig = {
   opacityMax: number
   blurBias: number
   focusRange: number
+  driftSeeds: readonly [number, number, number]
 }
 
 function FragmentField({
@@ -250,11 +279,13 @@ function FragmentField({
   planeWidth,
   planeHeight,
   config,
+  introProgress,
 }: {
   anchors: Anchor[]
   planeWidth: number
   planeHeight: number
   config: FragmentBandConfig
+  introProgress: MutableRefObject<number>
 }) {
   const mesh = useRef<THREE.InstancedMesh>(null)
 
@@ -278,10 +309,14 @@ function FragmentField({
   const blurAttr = useMemo(() => new Float32Array(anchors.length), [anchors.length])
   const tintAttr = useMemo(() => {
     const arr = new Float32Array(anchors.length * 3)
+    const color = new THREE.Color()
     anchors.forEach((anchor, index) => {
-      arr[index * 3] = anchor.r
-      arr[index * 3 + 1] = anchor.g
-      arr[index * 3 + 2] = anchor.b
+      // getImageData returns sRGB-encoded bytes; this buffer attribute
+      // bypasses the texture pipeline, so decode to linear manually.
+      color.setRGB(anchor.r, anchor.g, anchor.b, THREE.SRGBColorSpace)
+      arr[index * 3] = color.r
+      arr[index * 3 + 1] = color.g
+      arr[index * 3 + 2] = color.b
     })
     return arr
   }, [anchors])
@@ -296,6 +331,11 @@ function FragmentField({
     const cameraDrift = camera.position.z - BASE_CAMERA_Z
     const dynamicFocusRange = Math.max(config.focusRange - cameraDrift * 0.5, 0.35)
 
+    const progress = introProgress.current
+    const bandDriftX = organicAxis(t, config.driftSeeds[0]) * 0.05 * progress
+    const bandDriftY = organicAxis(t, config.driftSeeds[1]) * 0.05 * progress
+    const bandDriftZ = organicAxis(t, config.driftSeeds[2]) * 0.3 * progress
+
     anchors.forEach((anchor, index) => {
       const seed = seeds[index]
       const age = (t * seed.speed + seed.phase) % 1
@@ -307,9 +347,10 @@ function FragmentField({
 
       const baseX = anchor.x * seed.scatter
       const baseY = anchor.y * seed.scatter
-      const worldX = (baseX + dirX * seed.travel * eased - dirY * wobble) * planeWidth
-      const worldY = (baseY + dirY * seed.travel * eased + dirX * wobble) * planeHeight
-      const worldZ = seed.zOffset + Math.sin(t * seed.wobbleFreq * 0.5 + seed.zPhase * 6.28) * config.zWobble
+      const worldX = (baseX + dirX * seed.travel * eased - dirY * wobble + bandDriftX) * planeWidth
+      const worldY = (baseY + dirY * seed.travel * eased + dirX * wobble + bandDriftY) * planeHeight
+      const worldZ =
+        seed.zOffset + Math.sin(t * seed.wobbleFreq * 0.5 + seed.zPhase * 6.28) * config.zWobble + bandDriftZ
 
       const envelope = 0.4 + 0.6 * Math.sin(Math.PI * age)
       opacityAttr[index] = Math.max(envelope, 0) * config.opacityMax
@@ -365,6 +406,7 @@ const FAR_BAND: FragmentBandConfig = {
   opacityMax: 0.22,
   blurBias: 0.5,
   focusRange: 3.0,
+  driftSeeds: [211, 242, 278],
 }
 
 const NEAR_BAND: FragmentBandConfig = {
@@ -382,17 +424,24 @@ const NEAR_BAND: FragmentBandConfig = {
   opacityMax: 0.48,
   blurBias: 0.03,
   focusRange: 1.9,
+  driftSeeds: [419, 450, 486],
 }
 
-function CameraRig() {
-  useFrame(({ clock, camera }) => {
+const CAMERA_SEEDS = { x: 601.3, y: 634.7, z: 659.1 }
+
+function CameraRig({ introProgress }: { introProgress: MutableRefObject<number> }) {
+  useFrame(({ clock, camera }, delta) => {
     const t = clock.getElapsedTime()
-    const targetX = Math.sin(t * 0.05) * 0.5 + Math.sin(t * 0.0083) * 0.16
-    const targetY = Math.cos(t * 0.038) * 0.28
-    const targetZ = BASE_CAMERA_Z + Math.sin(t * 0.024) * 1.1
-    camera.position.x += (targetX - camera.position.x) * 0.015
-    camera.position.y += (targetY - camera.position.y) * 0.015
-    camera.position.z += (targetZ - camera.position.z) * 0.015
+    const progress = introProgress.current
+    const driftX = organicAxis(t, CAMERA_SEEDS.x) * 0.5 * progress
+    const driftY = organicAxis(t, CAMERA_SEEDS.y) * 0.28 * progress
+    const driftZ = organicAxis(t, CAMERA_SEEDS.z) * 1.1 * progress
+    const targetX = driftX
+    const targetY = driftY
+    const targetZ = BASE_CAMERA_Z + CAMERA_INTRO_OFFSET * (1 - progress) + driftZ
+    camera.position.x = THREE.MathUtils.damp(camera.position.x, targetX, DAMP_LAMBDA, delta)
+    camera.position.y = THREE.MathUtils.damp(camera.position.y, targetY, DAMP_LAMBDA, delta)
+    camera.position.z = THREE.MathUtils.damp(camera.position.z, targetZ, DAMP_LAMBDA, delta)
     camera.lookAt(0, 0, 0)
   })
   return null
@@ -400,6 +449,9 @@ function CameraRig() {
 
 function Scene({ url }: { url: string }) {
   const texture = useLoader(THREE.TextureLoader, url)
+  useMemo(() => {
+    texture.colorSpace = THREE.SRGBColorSpace
+  }, [texture])
   const image = texture.image as HTMLImageElement
   const textureAspect = image.width / image.height
   const [planeWidth, planeHeight] = useContainScale(textureAspect)
@@ -409,13 +461,26 @@ function Scene({ url }: { url: string }) {
   )
   const farAnchors = useMemo(() => anchors.slice(0, FAR_FRAGMENT_COUNT), [anchors])
   const nearAnchors = useMemo(() => anchors.slice(FAR_FRAGMENT_COUNT), [anchors])
+  const { progress } = useIntroTimeline(INTRO_DURATION_MS, false)
 
   return (
     <>
-      <FragmentField anchors={farAnchors} config={FAR_BAND} planeHeight={planeHeight} planeWidth={planeWidth} />
-      <MaterialPlane texture={texture} />
-      <FragmentField anchors={nearAnchors} config={NEAR_BAND} planeHeight={planeHeight} planeWidth={planeWidth} />
-      <CameraRig />
+      <FragmentField
+        anchors={farAnchors}
+        config={FAR_BAND}
+        introProgress={progress}
+        planeHeight={planeHeight}
+        planeWidth={planeWidth}
+      />
+      <MaterialPlane introProgress={progress} texture={texture} />
+      <FragmentField
+        anchors={nearAnchors}
+        config={NEAR_BAND}
+        introProgress={progress}
+        planeHeight={planeHeight}
+        planeWidth={planeWidth}
+      />
+      <CameraRig introProgress={progress} />
     </>
   )
 }

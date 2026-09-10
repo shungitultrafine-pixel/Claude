@@ -96,12 +96,12 @@
 .home-page__menu i { background: var(--ink); display: block; height: 1px; margin: 2px; width: 0.63rem; }
 
 .home-page__material {
-  bottom: 12.5svh;
-  left: 35%;
+  bottom: 18svh;
+  left: 42%;
   pointer-events: none;
   position: absolute;
-  right: 7%;
-  top: 10%;
+  right: 6%;
+  top: 6%;
   z-index: 1;
 }
 
@@ -176,7 +176,7 @@
 @media (max-width: 850px) {
   .home-page { min-height: 46rem; }
   .home-page__navigation a { display: none; }
-  .home-page__material { bottom: 19%; left: 11%; right: -11%; top: 17%; }
+  .home-page__material { bottom: 7%; left: 10%; right: -10%; top: 57%; }
   .home-page__copy { max-width: 86vw; top: 20%; }
   .home-page h1 { font-size: clamp(2.05rem, 8.6vw, 3.4rem); letter-spacing: 0.065em; }
   .home-page__copy p { font-size: 0.78rem; max-width: 19rem; }

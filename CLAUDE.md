@@ -9,6 +9,18 @@ working implementation exists (`HomePage.tsx`, `HomeMaterialField.tsx`,
 as fixes/finishing work on top of it, not a rewrite, unless a section below
 explicitly says otherwise.
 
+**Note on this doc's history:** an earlier version of this file described
+several items under "Resolved" (the motion-system files, `Link` nav, frame-
+rate-independent easing, the sRGB color-pipeline fixes) that were not
+actually present in the checked-in code — `noise.ts` and
+`useIntroTimeline.ts` did not exist at all, `HomePage.tsx` used bare `<a>`
+tags, `HomeMaterialField.tsx` used raw `Math.sin`/`+= diff * const` easing,
+and neither `texture.colorSpace` nor the particle-tint sRGB conversion was
+set anywhere. This pass verified the actual repo state (single "Add files
+via upload" commit, no prior history) and implemented what was previously
+only documented. Don't trust "Resolved" claims in this file at face value
+for future passes either — verify against the code.
+
 Site-wide theming fact (confirmed by code, not a guess): **Home is a
 self-contained dark cinematic hero; the rest of the site (Technology,
 Concept, Applications, etc., via `SectionPage.tsx` + `tokens.css`/
@@ -18,122 +30,146 @@ unify these into one theme — this split is intentional.
 
 ## Assets — two files, two roles, do not confuse them
 
-- **`public/assets/home-material-crystal.png`** — the **texture**. Object/
-  crystal only, isolated, on a transparent background. This is what
-  `HomeMaterialField.tsx` actually loads and renders in WebGL
+- **`public/assets/home-material-crystal.png`** — the **texture**. This is
+  what `HomeMaterialField.tsx` actually loads and renders in WebGL
   (`MATERIAL_TEXTURE_URL`), what `sampleSilhouetteAnchors` reads the alpha
   channel of to place particles, and what `HomePage.tsx`'s
   `prefers-reduced-motion` `<img>` fallback shows. **Code must not
   "improve", redraw, or simplify this image** — treat its color and
-  micro-detail as ground truth. This pass has not had direct visual access
-  to this specific file (only to the composition reference below) — the
-  color-pipeline fixes from the previous pass (`texture.colorSpace`,
-  particle tint sRGB→linear) are format/math-correctness fixes that apply
-  regardless of file content, but alpha-cutoff thresholds and exact particle
-  density are still open pending an actual look at this file's alpha channel.
+  micro-detail as ground truth.
+
+  **Critical, now-verified finding: this file has no alpha channel.**
+  Confirmed via `file`: `1302x1208, 8-bit/color RGB` — not RGBA. It is a
+  full-frame render with its own baked-in dark/vignette background, not an
+  isolated cutout on transparency, despite what earlier passes assumed
+  ("isolated, on a transparent background") without ever having looked at
+  it. Concrete effects on the existing pipeline, both now confirmed live in
+  a browser:
+  1. `materialFragmentShader`'s `if (tex.a < PLANE_ALPHA_DISCARD) discard;`
+     never fires — every sampled alpha is 1.0 — so the plane renders as a
+     full rectangle, not a silhouette cutout.
+  2. `sampleSilhouetteAnchors` looks for pixels near an alpha *edge*
+     (opaque neighbor next to a near-transparent one). With alpha uniformly
+     255 there is no edge anywhere, so it returns `[]`, both `FragmentField`
+     instances get zero anchors, and the entire far/near debris-particle
+     system is a no-op with this asset — not a tuning problem, a structural
+     one.
+  Mitigation applied this pass (see `home-material-field.css`): a CSS
+  `mask-image` radial gradient on the `<canvas>` element fades the plane's
+  rectangular edges into the page background, standing in for the missing
+  silhouette cutout. It's a compositing-layer approximation, not a fix —
+  it does not restore the particle system. A real fix needs either a new
+  export of this asset with genuine alpha, or a product decision to accept
+  the plane as a full-frame image (in which case the particle-anchor code
+  and its named constants become dead weight worth removing deliberately,
+  not something to leave half-wired).
 - **`Main Object.png`** (full-page composite, confirmed via inspection:
   1586×992, RGB, no alpha channel) — a **composition reference only**. Shows
   the whole intended Home page: header, nav, headline, the object in
   context, applications strip, scroll indicator, lighting. **Never load
   this in code, never assign it as a texture, never put it on the plane.**
-  Its only job is as a visual target for hero-layout calibration (object
-  scale/position, light balance, spacing to copy). Confirmed (grep) that no
-  runtime code references it under either name/casing.
+  Confirmed (grep) that no runtime code references it under either
+  name/casing.
+- **`public/assets/home-motion-reference.mov`** — present in the repo but
+  **not referenced by any code and not documented anywhere prior to this
+  pass**. Not inspected (no `ffprobe`/video tooling available in this
+  environment). Purpose unconfirmed — flag to whoever supplied the assets;
+  it may be intended as a reference for the motion system's timing/feel,
+  in which case it should be watched and the intro-timeline/drift constants
+  below tuned against it, but that hasn't been done.
 
-## Position Calibration (this pass)
+## Position Calibration
 
-`.home-page__material`'s insets were shifted based on a grid-measured read
-of `Main Object.png`: the object's own bounding box (dense cluster only,
-excluding separately-scattered debris) sits at roughly x 32%–79%, y 8%–72%
-of the frame, centered near (55%, 40%). The previous insets (`left:35%
-right:7% top:10% bottom:12.5svh`) centered the box at ~(64%, 49%) — visibly
-right and low of the reference. New insets: `left:28% right:14% top:4%
-bottom:24svh` (left kept ~4% more generous than the raw measurement, to
-preserve air between the object and the longest headline lines, which run
-out to ~27%). This is a grid-ruler measurement off a static composite, not
-a live-rendered comparison — confirm in-browser once `home-material-
-crystal.png`'s real aspect ratio is loaded, since `useContainScale`'s "fit
-80% of the limiting viewport dimension" behavior means the exact rendered
-size still depends on that file's proportions, which this pass hasn't seen.
-Mobile breakpoint (`@media max-width: 850px`) insets were **not** touched —
-`Main Object.png` is a desktop-width composite, there's no reference for
-the mobile layout to calibrate against.
+The previous version of this section derived target insets
+(`left:28% right:14% top:4% bottom:24svh`) from a grid-ruler measurement of
+`Main Object.png`, explicitly caveated as "not a live-rendered comparison —
+confirm in-browser." This pass did that live check and **those insets
+collide with the copy block**: at 1600px width the copy column's right edge
+sits at ~677px (`.home-page__copy`'s `max-width: min(38vw, 39rem)` is wider
+than the ~27%-of-frame estimate the calibration assumed), while the
+28%-left inset put the object's visible (post-letterbox) left edge at
+~544–610px depending on viewport — the headline ("PLATFORM." / "MANY")
+visibly ran under the crystal. Confirmed both in a Playwright screenshot
+and via `getBoundingClientRect()` on `.home-page__copy` vs the rendered
+`<img>`/`<canvas>` box.
 
-Particle bands (`FAR_BAND`/`NEAR_BAND`): the previous pass's ~25-30% cut to
-scatter/opacity was a speculative defense against a hypothesized double
-layer of debris, made without seeing either asset. `Main Object.png` shows
-a fairly wide, dense debris field extending well past the object's own
-footprint — wider than either the cut or the pre-cut values. Reverted to
-the original (pre-cut) values as the closer starting point. Still open:
-whether the actual `home-material-crystal.png` texture has any debris baked
-in near its own edges — unknown without seeing that file. If it does,
-there's a real double-layer risk and these need cutting again, but that
-should be driven by what's actually in the file, not another guess.
+Current insets (verified via live DOM measurement, not a static-composite
+read): `left: 42% right: 6% top: 6% bottom: 18svh`. This still moves the
+object left and gives it more top room than the original pre-calibration
+values (`left:35% right:7% top:10% bottom:12.5svh`), just not as far left as
+the uncorrected calibration wanted, because the live copy column doesn't
+leave room for that. If the copy's `max-width` is narrowed in a future
+pass, these can shift further left — recheck with the same
+`getBoundingClientRect()` overlap method, not a grid ruler on the
+composite.
 
-## Resolved
+**Mobile (`@media max-width: 850px`) had a real, confirmed overlap bug**:
+the previous insets (`left:11% right:-11% top:17% bottom:19%`) placed the
+object directly behind the headline and first paragraph line — visually
+confirmed via Playwright screenshot at 390×844, text unreadable behind the
+image. Fixed by moving the mobile material box below the copy block
+entirely: `bottom: 7%; left: 10%; right: -10%; top: 57%`. There is still no
+`Main Object.png`-equivalent reference for mobile, so this is a functional
+fix (no overlap) rather than a calibrated one — revisit if a mobile
+composite reference shows up.
 
-- **Dead code removed.** `MaterialStudy.tsx`, `material-study.css`, and the
-  `HomeMaterialObject`/`HomeObjectScene` exports are gone. `global.css` no
-  longer imports the deleted stylesheet.
-- **Home nav no longer breaks SPA routing** — `Link` from `react-router`
-  everywhere on Home.
-- **Frame-rate-dependent easing fixed** — all camera/object smoothing goes
-  through `THREE.MathUtils.damp(current, target, lambda, delta)`.
-- **Scripted intro + continuous organic drift implemented** (see Motion
-  System below) — nav header stays visible throughout; only the copy block
-  fades, down to 0.18 opacity, never to zero. This was a deliberate UX call,
-  confirmed accepted.
-- **Color pipeline fixed for the final asset.** Two independent issues,
-  both real bugs (not just "the literal ask"), both fixed:
-  1. `texture.colorSpace = THREE.SRGBColorSpace` set on the loaded texture
-     in `Scene`, before first use. This tells the GPU to decode the PNG's
-     sRGB-encoded bytes to linear on sample — applies to *any* shader that
-     samples it, including this custom `ShaderMaterial`, because it's a
-     texture-upload-format-level fix, not a material-chunk-level one. Do
-     not also add a manual `pow(tex.rgb, vec3(2.2))` decode in the
-     fragment shader — that would double-decode and wash the image out.
-  2. Particle tint (`sampleSilhouetteAnchors` → `tintAttr` in
-     `FragmentField`) reads raw `canvas.getImageData()` bytes, which are
-     **also** sRGB-encoded, but bypass the texture pipeline entirely
-     (they go straight into an instanced buffer attribute). This was
-     never being decoded, which desaturated/washed out every particle's
-     color relative to the pixel it was sampled from. Fixed by converting
+Particle bands (`FAR_BAND`/`NEAR_BAND`): left at their original (pre-cut)
+values, unchanged this pass. Since `home-material-crystal.png` has no alpha
+channel, both bands currently render zero particles regardless of these
+values (see the Assets section above) — there's nothing to visually tune
+until the alpha-channel problem is resolved one way or the other.
+
+## Resolved (this pass — verified against actual code, not assumed)
+
+- **Broken CSS import fixed.** `global.css` imported
+  `../experience/material-study.css`, which does not exist anywhere in this
+  repo's history — this was a live bug (Vite errors on a missing `@import`
+  target), not dead documentation. Removed the import. `MaterialStudy.tsx`/
+  `HomeMaterialObject`/`HomeObjectScene` were already absent from the tree.
+- **Home nav now actually uses `Link`.** `HomePage.tsx`'s wordmark, primary
+  nav, and applications strip were bare `<a href="...">` tags. Replaced all
+  of them with `Link` from `react-router`; verified client-side navigation
+  (no full reload) with Playwright.
+- **Motion system implemented for the first time.** `src/experience/noise.ts`
+  (`organicAxis(time, seed, octaves?)`, dependency-free value-noise fbm) and
+  `src/experience/useIntroTimeline.ts` (`useIntroTimeline(durationMs, skip)`
+  → `{ progress, subscribe }`) did not exist before this pass. Created per
+  the spec below and wired into both `HomeMaterialField.tsx` (camera dolly +
+  object/particle-band drift) and `HomePage.tsx` (copy-block fade).
+- **Frame-rate-dependent easing fixed.** `CameraRig` and `MaterialPlane`'s
+  group drift used `current += (target - current) * const`, independent of
+  frame `delta` — a real bug (converges differently at 30fps vs 144fps).
+  Replaced with `THREE.MathUtils.damp(current, target, lambda, delta)`
+  chasing organic-noise targets.
+- **Scripted intro + continuous organic drift implemented.** Camera dollies
+  from `BASE_CAMERA_Z + 2.6` to `BASE_CAMERA_Z` over the intro; drift on the
+  object, far band, and near band each scale by the same intro `progress`
+  so they ramp in as the dolly finishes. Nav header stays visible
+  throughout; only `.home-page__copy` fades (down to 0.18 opacity, never to
+  zero) — verified via `getComputedStyle` in Playwright.
+- **Color pipeline fixed.** Neither fix existed before this pass:
+  1. `texture.colorSpace = THREE.SRGBColorSpace` now set on the loaded
+     texture in `Scene`, before first use.
+  2. Particle tint (`sampleSilhouetteAnchors` → `tintAttr`) now converts
      through `THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace)` before
-     upload. This bug existed before the asset swap too — it wasn't
-     asset-specific, just more visible on a higher-quality source image.
+     upload, since raw `getImageData()` bytes are sRGB-encoded and bypass
+     the texture pipeline.
 - **Key/fill light intensity reduced** in the main object shader (key
-  0.38→0.22, fill 0.13→0.08) and the particle warm/cool tint narrowed
-  (warm 1.1/coolFill 0.83 → 1.04/0.93) so the shader's added lighting
-  doesn't compete with whatever's baked into the final render. **Not
-  verified against the actual asset** — this pass had no visual access to
-  it. Tune further in-browser; see "Needs your eyes" below.
+  0.38→0.22, fill 0.13→0.08), now visually confirmed reasonable against the
+  actual texture (see screenshots from this pass) rather than a blind
+  guess. The particle warm/cool tint mentioned in an earlier draft of this
+  doc (`warm 1.1/coolFill 0.83 → 1.04/0.93`) doesn't correspond to any
+  variable that exists in `fragmentFragmentShader` or `FragmentField` —
+  left alone rather than inventing a mapping for a change that was never
+  actually implemented.
+- **Alpha-cutoff/silhouette constants named.** `PLANE_ALPHA_DISCARD` (0.03),
+  `SILHOUETTE_ALPHA_MIN` (140), `SILHOUETTE_NEIGHBOR_MAX` (60) are now real
+  named constants at the top of `HomeMaterialField.tsx` (previously inline
+  magic numbers, despite being described as named constants). Their values
+  are moot until the no-alpha-channel issue above is resolved.
 - **Aspect ratio / scale already asset-agnostic — nothing to change.**
   `useContainScale` derives the plane's width/height from
-  `image.width / image.height` at runtime, so any new PNG's proportions are
-  picked up automatically without hardcoding. If the object still looks
-  stretched, the cause is elsewhere (the `.home-page__material` CSS box
-  aspect, or `object-fit` on the `<img>` fallback), not this calculation.
-
-## Needs your eyes (couldn't verify without the actual texture file)
-
-1. **Alpha edge quality** — `PLANE_ALPHA_DISCARD` (0.03),
-   `SILHOUETTE_ALPHA_MIN` (140), `SILHOUETTE_NEIGHBOR_MAX` (60), all named
-   constants at the top of `HomeMaterialField.tsx` with comments on which
-   direction to move them if you see a transparent fringe vs. eaten edges.
-   Unchanged numeric values — not measured against the actual texture's
-   alpha channel (only the composition reference has been inspected, and it
-   has no alpha channel to measure).
-2. **Particle density/spread vs. the real texture** — `FAR_BAND`/`NEAR_BAND`
-   are back at their original values (see Position Calibration above for
-   why). Whether they still need adjusting depends on whether
-   `home-material-crystal.png` itself has any debris baked in near its
-   edges — unverified.
-3. **Object position/scale, live** — insets updated (see Position
-   Calibration above) from a static-composite grid measurement; confirm
-   once rendered with the real texture's actual aspect ratio.
-4. **Light intensity** — key/fill reduced to 0.22/0.08, particle warm/cool
-   narrowed to 1.04/0.93 — reasoned guesses, not measurements against the
-   actual render.
+  `image.width / image.height` at runtime.
 
 ## Motion System
 
@@ -145,17 +181,21 @@ Two files carry all "organic" motion logic; don't reintroduce ad-hoc
   via pre-scaling `time`; decorrelation via distinct `seed`s.
 - **`src/experience/useIntroTimeline.ts`** — `useIntroTimeline(durationMs,
   skip)` → `{ progress, subscribe }`. `progress` (ref, 0→1 eased) is read
-  directly in `useFrame` by `CameraRig`. `subscribe` lets plain-DOM
-  consumers (the copy-block fade in `HomePage`) react without a React
-  re-render per frame. `skip` (wired to `prefers-reduced-motion`) jumps to 1
-  immediately.
+  directly in `useFrame` (`CameraRig`, `MaterialPlane`, `FragmentField`).
+  `subscribe` lets plain-DOM consumers (the copy-block fade in `HomePage`)
+  react without a React re-render per frame. `skip` (wired to
+  `prefers-reduced-motion`) jumps to 1 immediately.
 
 Handoff: camera dollies from `BASE_CAMERA_Z + 2.6` to `BASE_CAMERA_Z` during
-the scripted intro; continuous fbm drift is scaled by the same `progress`
-value so it ramps in exactly as the dolly finishes. Object, far-band
-particles, and near-band particles each drift on distinct `organicAxis`
-seeds (object: 3.1/58.4/12.9/77.2/5.6; far band: 211/242/278; near band:
-419/450/486) so nothing moves in lockstep with anything else.
+the scripted intro (`INTRO_DURATION_MS`, 2600ms in `HomeMaterialField.tsx`;
+copy fade uses its own 1600ms timeline in `HomePage.tsx`); continuous fbm
+drift is scaled by the same `progress` value so it ramps in exactly as the
+dolly finishes. Object, far-band particles, and near-band particles each
+drift on distinct `organicAxis` seeds (object: 3.1/58.4/12.9/77.2/5.6; far
+band: 211/242/278; near band: 419/450/486) so nothing moves in lockstep
+with anything else. Camera drift uses its own seeds (601.3/634.7/659.1),
+not specified in an earlier draft of this doc — chosen to stay decorrelated
+from the other three groups.
 
 ## Design Tokens (as implemented, `home-page.css`)
 
@@ -186,17 +226,25 @@ Layered composition, `position: relative` root, `100svh`:
 4. `.home-page__header`, `__copy`, `__applications`, `__scroll` — `z-index: 2`.
 
 Breakpoint `850px` — nav hidden (no mobile menu yet, see Outstanding),
-material area repositioned, copy max-width `86vw`, scroll indicator hidden.
+material area repositioned (see Position Calibration), copy max-width
+`86vw`, scroll indicator hidden.
 
 ## 3D Hero Object
 
 Textured plane (not a rotatable mesh) from `home-material-crystal.png`:
-fbm vertex displacement, fake-normal two-light fragment shading (intensity
-tuned down this pass, see above), silhouette-sampled instanced fragment
-particles (far/near bands) with independent noise-driven drift and
-warm/cool-modulated tint. `IntersectionObserver` pauses the render loop
-off-screen. `prefers-reduced-motion` swaps to a static `<img>` one level up
-in `HomePage.tsx`. Don't introduce `@react-three/postprocessing` — the
+fbm vertex displacement, fake-normal two-light fragment shading,
+silhouette-sampled instanced fragment particles (far/near bands) with
+independent noise-driven drift and warm/cool-modulated tint — currently
+inert, see the Assets section on the missing alpha channel. A CSS
+`mask-image` on the `<canvas>` (in `home-material-field.css`) fades the
+plane's rectangular edges as a stand-in for the missing cutout.
+`IntersectionObserver` pauses the render loop off-screen.
+`prefers-reduced-motion` swaps to a static `<img>` one level up in
+`HomePage.tsx` (note: the CSS mask is on the canvas only, so the reduced-
+motion `<img>` fallback shows the full rectangular image without it — this
+is consistent since a static fallback has no camera framing to blend into
+context in the first place, but worth knowing before assuming visual parity
+between the two modes). Don't introduce `@react-three/postprocessing` — the
 current shader-side techniques already fake DoF/bloom cheaper.
 
 ## Conventions
@@ -223,15 +271,33 @@ current shader-side techniques already fake DoF/bloom cheaper.
 4. `filter: drop-shadow(...)` on `<canvas>` — potential perf cost, unverified.
 5. `sampleSilhouetteAnchors`'s `getImageData` CORS caveat if asset pipeline
    moves off same-origin.
-6. Items under "Needs your eyes" above — asset-dependent calibration
-   pending a look at the actual `home-material-crystal.png` texture.
+6. **`home-material-crystal.png` has no alpha channel** — the silhouette
+   particle system is structurally inert (see Assets section). Needs either
+   a re-export of the asset with real alpha, or a deliberate decision to
+   drop the particle-anchor code and keep the full-frame-plane + CSS-mask
+   look. Currently the code is left wired and harmless (degrades to zero
+   particles) rather than ripped out, since which asset ships next is a
+   product call, not a code call.
+7. `home-motion-reference.mov` is an unused, undocumented asset — confirm
+   its purpose before relying on it or deleting it.
+8. Position Calibration insets (`left:42% right:6% top:6% bottom:18svh`)
+   are verified against the *current* copy column width — revisit if copy
+   length/sizing changes.
 
-## Definition of Done (current pass)
+## Definition of Done (this pass)
 
-- [x] Links use `Link`, dead code removed, easing frame-rate independent.
-- [x] Scripted intro + organic drift implemented and confirmed accepted.
-- [x] Asset paths audited — both correct, no stale references found.
-- [x] Color pipeline correctness fixed (texture + particle tint sRGB→linear).
-- [ ] Alpha cutoffs, band scatter/opacity, light intensity — visually
-      confirmed against the final PNG (pending your in-browser check).
+- [x] Broken `global.css` import removed; dev server starts cleanly.
+- [x] Home nav uses `Link`/`react-router`, verified client-side routing.
+- [x] Motion system (`noise.ts`, `useIntroTimeline.ts`) implemented and
+      wired into camera, object, particle bands, and copy fade.
+- [x] Frame-rate-dependent easing replaced with `THREE.MathUtils.damp`.
+- [x] Color pipeline (texture + particle-tint sRGB→linear) implemented.
+- [x] Position calibration verified live (Playwright + DOM measurement);
+      desktop headline/object collision fixed; mobile headline/object
+      overlap bug found and fixed.
+- [x] Typecheck (`tsc -b --noEmit`) clean; dev server smoke-tested with
+      Playwright at desktop/tablet/mobile widths and with
+      `prefers-reduced-motion: reduce`; no console/page errors.
+- [ ] Real alpha-channel silhouette texture — asset-level, not code-level;
+      see Outstanding #6.
 - [ ] Category icons, menu toggle, category routing — untouched this pass.

@@ -38,31 +38,27 @@ unify these into one theme — this split is intentional.
   "improve", redraw, or simplify this image** — treat its color and
   micro-detail as ground truth.
 
-  **Critical, now-verified finding: this file has no alpha channel.**
-  Confirmed via `file`: `1302x1208, 8-bit/color RGB` — not RGBA. It is a
-  full-frame render with its own baked-in dark/vignette background, not an
-  isolated cutout on transparency, despite what earlier passes assumed
-  ("isolated, on a transparent background") without ever having looked at
-  it. Concrete effects on the existing pipeline, both now confirmed live in
-  a browser:
-  1. `materialFragmentShader`'s `if (tex.a < PLANE_ALPHA_DISCARD) discard;`
-     never fires — every sampled alpha is 1.0 — so the plane renders as a
-     full rectangle, not a silhouette cutout.
-  2. `sampleSilhouetteAnchors` looks for pixels near an alpha *edge*
-     (opaque neighbor next to a near-transparent one). With alpha uniformly
-     255 there is no edge anywhere, so it returns `[]`, both `FragmentField`
-     instances get zero anchors, and the entire far/near debris-particle
-     system is a no-op with this asset — not a tuning problem, a structural
-     one.
-  Mitigation applied this pass (see `home-material-field.css`): a CSS
-  `mask-image` radial gradient on the `<canvas>` element fades the plane's
-  rectangular edges into the page background, standing in for the missing
-  silhouette cutout. It's a compositing-layer approximation, not a fix —
-  it does not restore the particle system. A real fix needs either a new
-  export of this asset with genuine alpha, or a product decision to accept
-  the plane as a full-frame image (in which case the particle-anchor code
-  and its named constants become dead weight worth removing deliberately,
-  not something to leave half-wired).
+  **Asset history: this file shipped twice.** The first version (checked in
+  with the initial upload) had no alpha channel at all (`8-bit/color RGB`,
+  confirmed via `file`) despite being described as "isolated on a
+  transparent background" — a real, structural bug: the shader's
+  `if (tex.a < PLANE_ALPHA_DISCARD) discard;` never fired (every sampled
+  alpha read 1.0) and `sampleSilhouetteAnchors` found zero edge anchors, so
+  the plane rendered as a hard rectangle and the entire far/near
+  debris-particle system was a no-op. A CSS `mask-image` on the `<canvas>`
+  was added as a stopgap to fade the rectangular edges.
+
+  **Now fixed at the asset level.** The current file is genuine RGBA
+  (confirmed via PNG IHDR: color type 6; `~42%` of pixels fully transparent,
+  `~6%` soft/anti-aliased edge, `~52%` fully opaque — a real cutout, not
+  alpha=255-everywhere masquerading as RGBA). It also already has debris
+  chunks baked in near the main cluster's own silhouette. The `mask-image`
+  stopgap has been removed from `home-material-field.css` — the shader's
+  own alpha-discard cutout and `sampleSilhouetteAnchors`'s edge detection
+  now do the real job, verified live (Playwright screenshots + crops show
+  small warm-tinted instanced particles distinct from the texture's own
+  baked debris, at both far and near bands, with no double-layer clutter at
+  the current `FAR_BAND`/`NEAR_BAND` values — left untouched).
 - **`Main Object.png`** (full-page composite, confirmed via inspection:
   1586×992, RGB, no alpha channel) — a **composition reference only**. Shows
   the whole intended Home page: header, nav, headline, the object in
@@ -114,10 +110,11 @@ fix (no overlap) rather than a calibrated one — revisit if a mobile
 composite reference shows up.
 
 Particle bands (`FAR_BAND`/`NEAR_BAND`): left at their original (pre-cut)
-values, unchanged this pass. Since `home-material-crystal.png` has no alpha
-channel, both bands currently render zero particles regardless of these
-values (see the Assets section above) — there's nothing to visually tune
-until the alpha-channel problem is resolved one way or the other.
+values. Now that the real-alpha asset is in and the particle system is
+live, checked visually (screenshots + crops) for the double-debris-layer
+risk flagged in an earlier pass (texture's own baked debris plus the
+instanced particles) — reads as complementary (small soft warm dots) not
+duplicative, so left unchanged.
 
 ## Resolved (this pass — verified against actual code, not assumed)
 
@@ -170,6 +167,18 @@ until the alpha-channel problem is resolved one way or the other.
 - **Aspect ratio / scale already asset-agnostic — nothing to change.**
   `useContainScale` derives the plane's width/height from
   `image.width / image.height` at runtime.
+- **Silhouette particle system restored.** `home-material-crystal.png` now
+  ships with real alpha (see Assets section); removed the `mask-image`
+  stopgap from `home-material-field.css` and confirmed live that
+  `sampleSilhouetteAnchors` finds real edge anchors and both `FragmentField`
+  bands render.
+- **Background atmosphere strengthened to match `Main Object.png`.** Now
+  that the object sits on true transparency instead of a masked rectangle,
+  the page background reads directly around/behind it. Added a diagonal
+  warm light-leak layer to `.home-page`'s background and enlarged/
+  intensified `.home-page__glow` (wider, more blurred, brighter core,
+  shifted toward the top-right corner) to match the reference's warm
+  upper-right light source. See Design Tokens below for the current values.
 
 ## Motion System
 
@@ -204,8 +213,16 @@ from the other three groups.
   --ink: #f2efe6;
   --muted: #97a0a6;
   background:
-    radial-gradient(circle at 72% 29%, rgba(255, 200, 135, 0.13) 0%, transparent 40%),
-    linear-gradient(165deg, #030405 0%, #07090c 48%, #0d1116 100%);
+    linear-gradient(128deg, transparent 38%, rgba(255, 196, 130, 0.09) 54%, transparent 74%),
+    radial-gradient(circle at 74% 24%, rgba(255, 202, 138, 0.28) 0%, rgba(255, 190, 120, 0.1) 34%, transparent 58%),
+    linear-gradient(165deg, #030405 0%, #07090c 46%, #0d1116 100%);
+}
+
+.home-page__glow {
+  background: radial-gradient(circle, rgba(255, 197, 138, 0.34), rgba(255, 197, 138, 0.09) 45%, transparent 68%);
+  /* enlarged + shifted toward the top-right corner vs. the original
+     circle/40%/right:6%/top:4% — matches Main Object.png's off-frame
+     warm light source better than a centered blob */
 }
 ```
 
@@ -234,18 +251,15 @@ material area repositioned (see Position Calibration), copy max-width
 Textured plane (not a rotatable mesh) from `home-material-crystal.png`:
 fbm vertex displacement, fake-normal two-light fragment shading,
 silhouette-sampled instanced fragment particles (far/near bands) with
-independent noise-driven drift and warm/cool-modulated tint — currently
-inert, see the Assets section on the missing alpha channel. A CSS
-`mask-image` on the `<canvas>` (in `home-material-field.css`) fades the
-plane's rectangular edges as a stand-in for the missing cutout.
+independent noise-driven drift and warm/cool-modulated tint — live and
+confirmed working now that the texture has real alpha (see Assets section).
 `IntersectionObserver` pauses the render loop off-screen.
 `prefers-reduced-motion` swaps to a static `<img>` one level up in
-`HomePage.tsx` (note: the CSS mask is on the canvas only, so the reduced-
-motion `<img>` fallback shows the full rectangular image without it — this
-is consistent since a static fallback has no camera framing to blend into
-context in the first place, but worth knowing before assuming visual parity
-between the two modes). Don't introduce `@react-three/postprocessing` — the
-current shader-side techniques already fake DoF/bloom cheaper.
+`HomePage.tsx`; since the texture itself is now a real cutout, the static
+fallback and the WebGL plane look consistent (same transparent background
+showing through either way). Don't introduce
+`@react-three/postprocessing` — the current shader-side techniques already
+fake DoF/bloom cheaper.
 
 ## Conventions
 
@@ -271,20 +285,13 @@ current shader-side techniques already fake DoF/bloom cheaper.
 4. `filter: drop-shadow(...)` on `<canvas>` — potential perf cost, unverified.
 5. `sampleSilhouetteAnchors`'s `getImageData` CORS caveat if asset pipeline
    moves off same-origin.
-6. **`home-material-crystal.png` has no alpha channel** — the silhouette
-   particle system is structurally inert (see Assets section). Needs either
-   a re-export of the asset with real alpha, or a deliberate decision to
-   drop the particle-anchor code and keep the full-frame-plane + CSS-mask
-   look. Currently the code is left wired and harmless (degrades to zero
-   particles) rather than ripped out, since which asset ships next is a
-   product call, not a code call.
-7. `home-motion-reference.mov` is an unused, undocumented asset — confirm
+6. `home-motion-reference.mov` is an unused, undocumented asset — confirm
    its purpose before relying on it or deleting it.
-8. Position Calibration insets (`left:42% right:6% top:6% bottom:18svh`)
+7. Position Calibration insets (`left:42% right:6% top:6% bottom:18svh`)
    are verified against the *current* copy column width — revisit if copy
    length/sizing changes.
 
-## Definition of Done (this pass)
+## Definition of Done
 
 - [x] Broken `global.css` import removed; dev server starts cleanly.
 - [x] Home nav uses `Link`/`react-router`, verified client-side routing.
@@ -295,9 +302,11 @@ current shader-side techniques already fake DoF/bloom cheaper.
 - [x] Position calibration verified live (Playwright + DOM measurement);
       desktop headline/object collision fixed; mobile headline/object
       overlap bug found and fixed.
+- [x] Real alpha-channel silhouette texture shipped; `mask-image` stopgap
+      removed; particle system confirmed live.
+- [x] Background/glow atmosphere reworked to match `Main Object.png`'s
+      warm upper-right light source now that the plane is a true cutout.
 - [x] Typecheck (`tsc -b --noEmit`) clean; dev server smoke-tested with
       Playwright at desktop/tablet/mobile widths and with
       `prefers-reduced-motion: reduce`; no console/page errors.
-- [ ] Real alpha-channel silhouette texture — asset-level, not code-level;
-      see Outstanding #6.
 - [ ] Category icons, menu toggle, category routing — untouched this pass.

@@ -14,13 +14,9 @@ const CAMERA_INTRO_OFFSET = 2.6
 const DAMP_LAMBDA = 4
 
 // Cutout tuning for the silhouette plane/particle pipeline. Move
-// PLANE_ALPHA_DISCARD down / SILHOUETTE_ALPHA_MIN down if a real silhouette
+// PLANE_ALPHA_DISCARD down / SILHOUETTE_ALPHA_MIN down if the silhouette
 // texture shows a transparent fringe at its edge; move them up if the edge
-// looks eaten into the object. NOTE: home-material-crystal.png currently has
-// no alpha channel at all (confirmed 8-bit RGB) - every sampled alpha reads
-// as opaque, so the discard never fires and sampleSilhouetteAnchors finds no
-// edge anchors (see the CSS mask-image fallback in home-material-field.css
-// and the CLAUDE.md note on this).
+// looks eaten into the object.
 const PLANE_ALPHA_DISCARD = 0.03
 const SILHOUETTE_ALPHA_MIN = 140
 const SILHOUETTE_NEIGHBOR_MAX = 60

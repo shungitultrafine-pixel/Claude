@@ -1,0 +1,195 @@
+.home-page {
+  --ink: #f2efe6;
+  --muted: #97a0a6;
+  background:
+    radial-gradient(circle at 72% 29%, rgba(255, 200, 135, 0.13) 0%, transparent 40%),
+    linear-gradient(165deg, #030405 0%, #07090c 48%, #0d1116 100%);
+  color: var(--ink);
+  min-height: 100svh;
+  overflow: hidden;
+  position: relative;
+}
+
+.home-page::after {
+  background:
+    radial-gradient(ellipse at 50% 50%, transparent 42%, rgba(0, 0, 0, 0.45) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, transparent 30%, transparent 68%, rgba(0, 0, 0, 0.4) 100%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.home-page__glow {
+  background: radial-gradient(circle, rgba(255, 197, 138, 0.22), transparent 62%);
+  filter: blur(2.5rem);
+  height: 46%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  position: absolute;
+  right: 6%;
+  top: 4%;
+  width: 40%;
+  z-index: 1;
+}
+
+.home-page__header,
+.home-page__copy,
+.home-page__applications,
+.home-page__scroll { position: absolute; z-index: 2; }
+
+.home-page__header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  left: clamp(1.5rem, 4.45vw, 4.3rem);
+  right: clamp(1.5rem, 4.45vw, 4.3rem);
+  top: clamp(1.4rem, 3.8vw, 2.7rem);
+}
+
+.home-page__brand { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.home-page__wordmark {
+  color: var(--ink);
+  font-size: clamp(0.8rem, 1.16vw, 1.12rem);
+  font-weight: 600;
+  letter-spacing: 0.27em;
+  text-transform: uppercase;
+}
+
+.home-page__tagline {
+  color: var(--muted);
+  font-size: clamp(0.5rem, 0.56vw, 0.6rem);
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.home-page__navigation { align-items: center; display: flex; gap: clamp(1.7rem, 4vw, 4.2rem); }
+
+.home-page__navigation a,
+.home-page__applications a,
+.home-page__scroll b {
+  color: var(--ink);
+  font-size: clamp(0.56rem, 0.62vw, 0.65rem);
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.home-page__navigation a { transition: opacity 160ms ease; }
+.home-page__navigation a:hover { opacity: 0.58; }
+
+.home-page__menu {
+  align-items: center;
+  border: 1px solid rgba(242, 239, 230, 0.4);
+  border-radius: 999px;
+  display: grid;
+  height: 1.85rem;
+  justify-content: center;
+  margin-left: clamp(0.2rem, 0.8vw, 1rem);
+  place-content: center;
+  width: 1.85rem;
+}
+
+.home-page__menu i { background: var(--ink); display: block; height: 1px; margin: 2px; width: 0.63rem; }
+
+/*
+ * Repositioned against a grid-measured read of the full-page composition
+ * reference (Main_Object.png — visual reference only, never loaded as an
+ * asset — see CLAUDE.md "Assets" section). Measured object bounding box in
+ * that reference: x ~32%-79%, y ~8%-72%, center ~(55%, 40%). Previous insets
+ * (left:35% right:7% top:10% bottom:12.5svh) centered the box at ~(64%,49%)
+ * — visibly right/low of the reference. Shifted left + up accordingly, with
+ * ~4% extra left margin over the raw measurement to keep clear air between
+ * the object and the longest headline lines (which run out to ~27%).
+ */
+.home-page__material {
+  bottom: 24svh;
+  left: 28%;
+  pointer-events: none;
+  position: absolute;
+  right: 14%;
+  top: 4%;
+  z-index: 1;
+}
+
+.home-page__material-image {
+  align-items: center;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+}
+
+.home-page__material-image img {
+  display: block;
+  filter: drop-shadow(0 0 3.4rem rgba(255, 197, 138, 0.14)) drop-shadow(0 1.6rem 2.2rem rgba(0, 0, 0, 0.55));
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.home-page__copy {
+  left: clamp(1.5rem, 4.45vw, 4.3rem);
+  max-width: min(38vw, 39rem);
+  top: clamp(11.5rem, 20.8svh, 15rem);
+}
+
+.home-page__rule { background: var(--ink); display: block; height: 1px; margin-bottom: clamp(1.45rem, 2.4vw, 2.2rem); opacity: 0.72; width: 2.3rem; }
+
+.home-page h1 {
+  color: rgba(242, 239, 230, 0.62);
+  font-size: clamp(2.25rem, 3.2vw, 4rem);
+  font-weight: 300;
+  letter-spacing: 0.095em;
+  line-height: 1.14;
+  margin: 0;
+}
+
+.home-page__emphasis { color: var(--ink); font-weight: 600; }
+
+.home-page__copy p {
+  color: var(--muted);
+  font-size: clamp(0.87rem, 1.14vw, 1.15rem);
+  letter-spacing: 0.115em;
+  line-height: 1.65;
+  margin: clamp(1.3rem, 2.6vw, 2.6rem) 0 0;
+  max-width: 31rem;
+}
+
+.home-page__applications {
+  bottom: clamp(2.2rem, 8.3svh, 5.4rem);
+  display: flex;
+  gap: clamp(1.8rem, 5.7vw, 6.5rem);
+  justify-content: center;
+  left: 24%;
+  right: 13%;
+}
+
+.home-page__applications a { min-width: max-content; padding-bottom: 1rem; position: relative; }
+.home-page__applications-link::after { background: currentColor; bottom: 0; content: ''; height: 1px; left: 0; opacity: 0.6; position: absolute; width: 72%; }
+
+.home-page__applications-link--water::after { background: #5fd0e4; opacity: 0.85; }
+.home-page__applications-link--rubber::after { background: #7cd192; opacity: 0.85; }
+.home-page__applications-link--ceramics::after { background: #e0b366; opacity: 0.85; }
+.home-page__applications-link--rare-earth::after { background: #ac8fe6; opacity: 0.85; }
+
+.home-page__scroll { align-items: center; display: flex; flex-direction: column; gap: 0.85rem; right: clamp(1.5rem, 4.45vw, 4.3rem); top: 43%; }
+.home-page__scroll span { background: currentColor; height: 2.25rem; opacity: 0.5; width: 1px; }
+.home-page__scroll b { font-size: 0.54rem; font-weight: 500; }
+.home-page__scroll i { border-radius: 50%; background: currentColor; display: block; height: 0.31rem; margin-top: 0.2rem; width: 0.31rem; }
+
+@media (max-width: 850px) {
+  .home-page { min-height: 46rem; }
+  .home-page__navigation a { display: none; }
+  .home-page__material { bottom: 19%; left: 11%; right: -11%; top: 17%; }
+  .home-page__copy { max-width: 86vw; top: 20%; }
+  .home-page h1 { font-size: clamp(2.05rem, 8.6vw, 3.4rem); letter-spacing: 0.065em; }
+  .home-page__copy p { font-size: 0.78rem; max-width: 19rem; }
+  .home-page__applications { bottom: 2rem; flex-wrap: wrap; gap: 1.25rem 1.9rem; left: 1.5rem; justify-content: flex-start; right: 1.5rem; }
+  .home-page__scroll { display: none; }
+}

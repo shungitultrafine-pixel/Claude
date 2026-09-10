@@ -1,0 +1,33 @@
+@import './tokens.css';
+@import '../experience/material-study.css';
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html,
+body,
+#root { min-height: 100%; }
+
+body {
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  margin: 0;
+  min-width: 320px;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.site-shell { min-height: 100svh; }
+
+.site-main--home { min-height: 100svh; }
+
+.site-header { background: var(--color-canvas); border-bottom: 1px solid var(--color-line); }
+.site-header__inner { align-items: center; display: flex; justify-content: space-between; margin: 0 auto; max-width: var(--content-max); min-height: var(--header-height); padding: 0 var(--gutter); }
+.wordmark { font-size: var(--text-nav); font-weight: 600; letter-spacing: -0.04em; }
+.primary-nav ul { display: flex; gap: 1.25rem; list-style: none; margin: 0; padding: 0; }
+.primary-nav a { color: var(--color-muted); font-size: var(--text-nav); }
+.nav-toggle { display: none; }
+.page--section { display: grid; min-height: calc(100svh - var(--header-height)); padding: var(--space-7) var(--gutter); place-items: center start; }
+.page__content { margin: 0 auto; max-width: var(--content-max); width: 100%; }
+.eyebrow { color: var(--color-muted); font-size: var(--text-nav); letter-spacing: .08em; text-transform: uppercase; }
